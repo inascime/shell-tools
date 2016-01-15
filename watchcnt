@@ -1,0 +1,91 @@
+#!/bin/bash
+#*************************************************************************#
+#    Copyright (C) 2015 Ian Nascimento <inascime@gmail.com>		  #
+#									  #
+#    This program is free software: you can redistribute it and/or modify #
+#    it under the terms of the GNU General Public License as published by #
+#    the Free Software Foundation, either version 3 of the License, or    #
+#    (at your option) any later version.				  #
+#									  #
+#    This program is distributed in the hope that it will be useful,	  #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of	  #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the	  #
+#    GNU General Public License for more details.			  #
+#									  #
+#    You should have received a copy of the GNU General Public License    #
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.#
+#*************************************************************************#
+
+# Find who is running watch
+
+DATE=$(date)
+if [[ -z "$NERSC_HOST" ]]
+then
+	host="$NERSC_HOST"
+else
+	host=$(hostname)
+	host=${host%??}
+fi
+
+echo "Probing $host nodes for users running watch..."
+node=1
+hostnodes=12
+if [[ "$host" == "cori" ]]
+then
+	hostnodes=13
+fi
+WATCHCNT=$(mktemp || exit 1)
+while (( node < hostnodes ))
+do
+	if (( node > 9 ))
+	then
+		ssh -n $host$node ps -Ao user,args 2>/dev/null |grep " watch " | grep -v $LOGNAME | awk '{node="node";print node " " $0}' |sed "s/node/$host$node/" >>$WATCHCNT
+	elif (( node > 10 ))
+	then
+		ssh -n $host\0$node ps -Ao user,args 2>/dev/null |grep " watch " | grep -v $LOGNAME | awk '{node="node";print node " " $0}' |sed "s|node|${host}0${node}|" >>$WATCHCNT
+	fi
+	((node++))
+done
+echo "Done."
+echo
+if [[ -s $WATCHCNT ]]
+then
+	cat $WATCHCNT
+	NAMES=$(mktemp)
+	awk '/sqs/ || /squeue/{print $2}' $WATCHCNT > $NAMES
+	if [[ -s $NAMES ]];
+	then
+		BODY=$(mktemp) || exit 1
+		while read -r; do
+			cat <<-EOF > $BODY
+			PARSE_START_NERSC
+			caller id:$REPLY 
+			u_resource_type:Computational Systems
+			u_resource:Cori
+			assignment_group:Consulting
+			assigned_to:yunhe
+			category:Running Jobs
+			subcategory:Other
+			state:5
+			u_owner:yunhe
+			opened_by:usgweb
+			PARSE_END_NERSC
+			EOF
+			echo >> $BODY
+			echo "$(date)" >> $BODY
+			echo "Hello," >> $BODY
+			echo >> $BODY
+			echo "Our records show that you are running watch command queue status frequently which will add a heavy overload to the batch system.  Please stop doing this." >> $BODY
+			grep $REPLY $WATCHCNT >> $BODY
+			cat $BODY | mail -s "[$host] Watch Ticket" inascime@lbl.gov
+		done < $NAMES
+		rm -f $WATCHCNT $BODY $NAMES
+		exit 0
+	fi
+else
+	rm -f $WATCHCNT
+	echo "No watch found on $host nodes"
+	exit 0
+fi
+
+
