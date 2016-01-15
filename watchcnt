@@ -78,12 +78,12 @@ then
 			echo "Our records show that you are running watch command queue status frequently which will add a heavy overload to the batch system.  Please stop doing this." >> $BODY
 			grep $REPLY $WATCHCNT >> $BODY
 			cat $BODY | mail -s "[$host] Watch Ticket" inascime@lbl.gov
-		done < $NAMES
-		rm -f $WATCHCNT $BODY $NAMES
+		done < "$NAMES"
+		rm -f "$WATCHCNT" "$BODY" "$NAMES"
 		exit 0
 	fi
 else
-	rm -f $WATCHCNT
+	rm -f "$WATCHCNT"
 	echo "No watch found on $host nodes"
 	exit 0
 fi
