@@ -1,0 +1,51 @@
+#!/bin/bash
+
+# Run uptime on all login nodes of host and generate some statistics.
+
+if [[ -n "$NERSC_HOST" ]]; then
+host=$NERSC_HOST
+fi
+count=1
+total=0
+mu=0
+if [[ "$host" == "cori" ]]; then
+	cori_login_nodes=13
+fi
+maxload=0.00
+minload=0.00
+while [[ $count -lt "$cori_login_nodes" ]]
+do
+	if [[ $count -gt "9" ]]; then
+		{ IFS= read -rd '' users; IFS= read -rd '' uptime; } < <(ssh -Y -q "$host$count" 'users; printf "\0"; uptime')
+		u=$(tr ' ' '\n' <<< "$users" | sort -u | wc -l)
+		up=$(awk '{print $10,$11,$12}' <<< "$uptime")
+		upp=$(awk '{print $10}' <<< "$uptime")
+		printf 'Host: %s Users: %s Load average: %s \n' "$host:$count" "$u" "$up"
+		total=$((total+u))
+		upp=${upp%?}
+		if [[ $u -gt $mu ]]; then mu=$u;hostt=$count;fi
+		greater_load=$(echo "$upp > $maxload" | bc)
+                lesser_load=$(echo "$upp < $maxload" | bc)
+                if [[ $greater_load -gt 0 ]]; then maxload=$upp;lhost=$count;fi
+                if [[ $lesser_load -gt 0 ]]; then minload=$upp;mlhost=$count;fi
+	else
+                { IFS= read -rd '' users; IFS= read -rd '' uptime; } < <(ssh -Y -q $host\0$count 'users; printf "\0"; uptime')
+                u=$(tr ' ' '\n' <<< "$users" | sort -u | wc -l)
+                up=$(awk '{print $10,$11,$12}' <<< "$uptime")
+		upp=$(awk '{print $10}' <<< "$uptime")
+                printf 'Host: %s Users: %s Load average: %s \n' "$host-0$count" "$u" "$up"
+                total=$((total+u))
+		upp=${upp%?}
+		if [[ $u -gt $mu ]]; then mu=$u;hostt=0$count;fi
+		greater_load=$(echo "$upp > $maxload" | bc)
+		lesser_load=$(echo "$upp < $maxload" | bc)
+		if [[ $greater_load -gt 0 ]]; then maxload=$upp;lhost=0$count;fi
+		if [[ $lesser_load -gt 0 ]]; then minload=$upp;mlhost=0$count;fi
+	fi
+		((count++))				
+	done
+((count--))
+echo "$total unique users online on all $count $host login nodes"
+echo "Most users on $host$hostt: $mu" 
+echo "$host$lhost is the most loaded login node within the last minute: $maxload"
+echo "$host$mlhost is the least loaded login node: $minload"
