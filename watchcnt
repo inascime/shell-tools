@@ -16,7 +16,7 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.#
 #*************************************************************************#
 
-# Find who is running watch
+# Find who is running watch on squeue or sqs and automatically emails a ticket for nersc consultants
 
 DATE=$(date)
 if [[ -z "$NERSC_HOST" ]]
@@ -40,7 +40,7 @@ do
 	if (( node > 9 ))
 	then
 		ssh -n $host$node ps -Ao user,args 2>/dev/null |grep " watch " | grep -v $LOGNAME | awk '{node="node";print node " " $0}' |sed "s/node/$host$node/" >>$WATCHCNT
-	elif (( node > 10 ))
+	elif (( node < 10 ))
 	then
 		ssh -n $host\0$node ps -Ao user,args 2>/dev/null |grep " watch " | grep -v $LOGNAME | awk '{node="node";print node " " $0}' |sed "s|node|${host}0${node}|" >>$WATCHCNT
 	fi
