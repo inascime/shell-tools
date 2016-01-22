@@ -1,0 +1,232 @@
+#!/bin/bash -x
+#Student Ian Arthur Nascimento
+#CS 260A GBOYD
+# sysmond - bash shell script that fakes a daemon.
+# sysmond runs in the background taking measurements every X minutes as specified in it's configfile
+# Measuraments are: Number of unique users, number of remote users, whether there is users using xwindows, the date and time, total number of processes running
+# and the 15 minutes load average of the system.
+# sysmond will ignore HUP signals in order to continue running in the background and calculate the following summary upon receiving a TERM or INT signal:
+#Average of procs runninng based on measurements, Percentage of users found and the number of measurements performed.
+#The summary save it's output to a logfile and will also print to stdout.
+#The logfile standard location is: /spare/tmp/sysmond.log
+#Sysmond will exit with code 0 after doing the summary
+
+# CHANGE this for testing. The standard place for sysmond's
+# configuration file is in /etc/sysconfig
+# The config file controls the interval to take measurements, wheter to append or not and the logfile location
+configfile=/etc/sysconfig/sysmond
+
+#Ignoring HUP
+
+trap '' 1
+
+####defaults values for parameters in config file, these defaults can be overrided by the config in the config file.
+interval=10
+logfile=students/inascime/config/sysmond.log
+append=yes
+
+
+errors_seen=no
+error() {
+    # error function. simply outputs an error message to the logfile.
+    # this function SETS THE GLOBAL VARIABLE errors_seen
+    # to indicate whether errors have been seen or not.
+
+    echo "ERROR: $*" >> "$logfile"
+    errors_seen=yes
+}
+
+read_config() {
+	# read_config path-to-configfile
+	#
+    # reads the config file and SETS THREE GLOBAL VARIABLES
+    # 	logfile - set to the path of the output log file
+    # 	append  - yes or no depending on whether the log file should be
+    #    	overwritten (no) or appended to (yes)
+    # 	interval = the number of minutes between reports
+    # these variables should already have default values
+	#
+	# read_config calls the function error to report errors
+	#	some errors cause an immediate return with a failure (1) status
+	# at the end of the function, it checks the global variable
+	#   errors_seen (set by the error function) and sets its return
+	#   status accordingly (0 if no errors were encountered, 1 otherwise)
+	#
+    [ $# -ne 1 ] && { error "illegal call to read_config" ; return 1; }
+    [ ! -f "$1" -o ! -r "$1" ] && { error "$1 not a readable file" ; return 1; }
+    local line cfile
+    cfile="$1"
+    OIFS="$IFS"
+    while read line; do
+        # ignore empty lines and comments
+        [ -z "$line" -o "${line:0:1}" = "#" ] && continue
+
+        # chop the line on =
+        IFS="="
+        set -- $line
+        IFS="$OIFS"
+
+        # look for keywords and process them
+        case "$1" in 
+            logfile) 
+                [ -n "$2" ] && logfile="$2" || error \
+                "Configfile=$cfile - no value for logfile: line='$line'" 
+                    ;;
+            append)    
+                [ "$2" = yes -o "$2" = no ] && append=$2 || error \
+                "Configfile=$cfile - illegal value for append: line='$line'"
+                    ;;
+            interval)    
+                echo "$2" | grep -qE "^[[:digit:]]+$" && interval=$2 || error \
+                "Configfile=$cfile - illegal value for interval: line='$line'"
+                    ;;
+            *)        
+                error "Configfile=$cfile - illegal line in $cfile:'$line'"
+                    ;;
+        esac
+    done < "$cfile"
+
+    # if there were any syntax errors, return failure
+    [ $errors_seen = yes ] && return 1
+    return 0
+}
+
+# read the config file and check the exit status
+if ! read_config "$configfile" ; then
+    # config file had errors or could not be read. 
+    # you must decide if this is a fatal error
+    # for now, this clause is just a null statement (:)
+    echo "Config file has errors or could not be read."
+fi
+
+# remove the log file if indicated. 
+
+# one last function to help you.
+log() {
+    echo -e "$*" >> "$logfile"
+}
+#Summary and Signal Handling
+summary() {
+
+proctotal=$1
+iterations=$2
+t_load=$3
+u_stats=$4
+#get procs average
+	procavg=$((proctotal / iterations))
+#load "average average" attempt
+	t_mean=$(echo "$t_load / $iterations" | bc)
+#user percentage found in measurements
+	u_percentage=$(echo "scale=1; 100*$u_stats / $iterations" | bc)
+#logging to logfile
+	log "\n"
+	log "*****SUMMARY*****"
+	log "Procs average: $procavg Load average: $t_mean"
+	log "Number of measurements performed: $iterations" 
+	log "User Percentage: $u_percentage%"
+	log "\n"
+#sending to stdout as well	
+	echo "*****SUMMARY*****"
+	echo "Procs average: $procavg Load average: $t_mean"
+	echo "Number of measurements: $iterations"
+	echo "User percentage: $u_percentage%"
+		return 0
+}
+#Summary invokation
+trap 'summary $totalprocz $instances $t_loadavg $u_login' 2 15
+
+#setting up globals
+t_loadavg=0.0
+instances=0
+totalprocz=0
+isitx=
+u_login=0
+#Setting up the header...
+
+dd1=$(date)
+hh=$(hostname)
+header=$(echo -e "DATE/TIME \t PROCS \t USERS \t REMOTE \t XUSERS? \t LOADAVG")
+
+log "Started at $hh on $dd1 . Interval: $interval"
+log "---------------------------------------------------------------------------------"
+log "$header"
+log "---------------------------------------------------------------------------------"
+
+#loop forever taking these measurements each $interval minutes
+
+while :
+do
+	#initializing/resetting variables
+	unset logmsg
+	unique="0"
+	procz=
+	loadavg=
+	rcheck=
+	users=
+	dd=
+	xuser=false
+	loca=0
+	remote=0
+	((instances++))
+#checking number of unique users
+
+	unique=$(users | tr ' ' '\n' | sort | uniq | wc -l)
+
+#checking number of *running* procs
+
+	procz=$(cat /proc/loadavg | cut -d" " -f4 | cut -d/ -f1)
+
+#checking last 15 min load average
+
+	loadavg=$(uptime | cut -d, -f5)
+
+#checking number of remote users and wheter there are xusers
+
+	rcheck=$(users | tr ' ' '\n' | sort | uniq)
+	
+for i in $rcheck
+do
+
+	who | grep -w "$i" | egrep ":[0-9]\)$"
+
+	if [ $? = "0" ]
+	then
+			xuser=true
+	else
+			((remote++))
+	#if unknown user is found, the calculation is "reversed" thus it is ignored.
+		if [ "$i" = "unknown" ];then ((remote--));fi
+	fi
+done
+
+	if "$xuser"
+	then
+		isitx="yes"
+	else
+		isitx="no"
+	fi
+
+#getting totals for average and percentage calculations in summary function
+totalprocz=$((totalprocz+procz))
+t_loadavg=$(echo "$t_loadavg+$loadavg" | bc)
+
+	if [ "$remote" != "0" -o  "$xuser" = "true" ]
+	then
+		((u_login++))
+	fi
+		
+echo "$u_login"
+#the date
+
+dd=$(date +"%m%d%H%M%Y")
+
+#printing measuraments to logfile
+logmsg=$(echo -e "$dd \t $procz \t $unique \t $remote \t \t  $isitx \t \t $loadavg")
+log "$logmsg"
+log "---------------------------------------------------------------------------------"
+#going/back to sleep
+	sleep $((interval*60)) &
+	wait
+done
+
+exit 0
