@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+
+# Pull information about a job.
+# Checkjob currently is under development.
+
+usage() {
+echo "Usage: checkjob jobid[,jobid,jobid...]"
+}
+
+if (( $# == 0 )); then usage;exit 1;fi
+reasonfile=$(mktemp)
+statesfile=$(mktemp)
+# Lets create a little reason code database that we can easily work with...
+cat <<-EOF > $reasonfile
+	AssociationJobLimit: The job's association has reached its maximum job count.
+	AssociationResourceLimit: The job's association has reached some resource limit. 
+	AssociationTimeLimit: The job's association has reached its time limit. 
+	BadConstraints: The job's constraints can not be satisfied. 
+	BeginTime: The job's earliest start time has not yet been reached. 
+	BlockFreeAction: An IBM BlueGene block is being freed and can not allow more jobs to start. 
+	BlockMaxError: An IBM BlueGene block has too many cnodes in error state to allow more jobs to start. 
+	Cleaning: The job is being requeued and still cleaning up from its previous execution. 
+	Dependency: This job is waiting for a dependent job to complete. 
+	FrontEndDown: No front end node is available to execute this job. 
+	InactiveLimit: The job reached the system InactiveLimit. 
+	InvalidAccount: The job's account is invalid. 
+	InvalidQOS: The job's QOS is invalid. 
+	JobHeldAdmin: The job is held by a system administrator. 
+	JobHeldUser:  The job is held by the user. 
+	JobLaunchFailure: The job could not be launched. This may be due to a file system problem, invalid program name, etc. 
+	Licenses: The job is waiting for a license. 
+	NodeDown: A node required by the job is down. 
+	NonZeroExitCode: The job terminated with a non-zero exit code. 
+	PartitionDown: The partition required by this job is in a DOWN state. 
+	PartitionInactive: The partition required by this job is in an Inactive state and not able to start jobs. 
+	PartitionNodeLimit: The number of nodes required by this job is outside of it's partitions current limits. Can also indicate that required nodes are DOWN or DRAINED. 
+	PartitionTimeLimit: The job's time limit exceeds it's partition's current time limit. 
+	Priority: One or more higher priority jobs exist for this partition or advanced reservation. 
+	Prolog: It's PrologSlurmctld program is still running. 
+	QOSJobLimit: The job's QOS has reached its maximum job count. 
+	QOSResourceLimit: The job's QOS has reached some resource limit. 
+	QOSTimeLimit: The job's QOS has reached its time limit. 
+	ReqNodeNotAvail: Some node specifically required by the job is not currently available. The node may currently be in use, reserved for another job, in an advanced reservation, DOWN, DRAINED, or not responding. Nodes which are DOWN, DRAINED, or not responding will be identified as part of the job's "reason" field as "UnavailableNodes". Such nodes will typically require the intervention of a system administrator to make available. 
+	Reservation: The job is waiting its advanced reservation to become available. 
+	Resources: The job is waiting for resources to become available. 
+	SystemFailure: Failure of the Slurm system, a file system, the network, etc. 
+	TimeLimit: The job exhausted its time limit. 
+	QOSUsageThreshold: Required QOS threshold has been breached. 
+	WaitingForScheduling: No reason has been set for this job yet. Waiting for the scheduler to determine the appropriate reason. 
+	EOF
+
+# And a little database for job state codes as well...
+
+cat <<-EOF > $statesfile
+	BF BOOT_FAIL: Job terminated due to launch failure, typically due to a hardware failure (e.g. unable to boot the node or block and the job can not be requeued). 
+	CA CANCELLED: Job was explicitly cancelled by the user or system administrator. The job may or may not have been initiated. 
+	CD COMPLETED: Job has terminated all processes on all nodes with an exit code of zero. 
+	CF CONFIGURING: Job has been allocated resources, but are waiting for them to become ready for use (e.g. booting). 
+	CG COMPLETING:  Job is in the process of completing. Some processes on some nodes may still be active. 
+	F FAILED: Job terminated with non-zero exit code or other failure condition. 
+	NF NODE_FAIL: Job terminated due to failure of one or more allocated nodes. 
+	PD PENDING: Job is awaiting resource allocation. 
+	PR PREEMPTED: Job terminated due to preemption. 
+	R RUNNING: Job currently has an allocation. 
+	SE SPECIAL_EXIT: The job was requeued in a special state. This state can be set by users, typically in EpilogSlurmctld, if the job has terminated with a particular exit value. 
+	ST STOPPED: Job has an allocation, but execution has been stopped with SIGSTOP signal. CPUS have been retained by this job. 
+	S SUSPENDED: Job has an allocation, but execution has been suspended and CPUs have been released for other jobs. 
+	TO TIMEOUT:  Job terminated upon reaching its time limit. 
+	EOF
+
+
+prio=$(sprio -j "$1")
+
+if [[ "$prio" == "Unable to find jobs matching user/id(s) specified" ]]; then 
+	echo "Unable to determine job priority and age"
+else
+	echo "$prio"
+fi
+echo " --- "
+queuef=$(mktemp)
+squeue -o "%.i %.t %.S %.r" > $queuef
+stime=$(awk -v jobid="$1" '$1 == jobid {print $3}' $queuef)
+if [[ "$stime" != "N/A" ]]; then
+	echo "Approximate START_TIME: $stime"
+else
+	echo "The estimated START_TIME has not been assigned"
+fi
+st=$(awk -v jobid="$1" '$1 == jobid {print $2}' $queuef)
+echo "CURRENT STATE - $(grep -w "$st" $statesfile)"
+rs=$(awk -v jobid="$1" '$1 == jobid {print $4}' $queuef)
+echo "REASON - $(grep -w "$rs" $reasonfile)"
+rm -f $statesfile $reasonfile $queuef
+exit 0
