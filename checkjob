@@ -1,17 +1,46 @@
 #!/usr/bin/env bash
 
-# Pull information about a job.
+# 02/01/2015 - <inascime@lbl.gov>
+# Pulls dedicated information with explanations about a job
 # Checkjob currently is under development.
+
+export PATH=/opt/slurm/default/bin:$PATH
+LC_ALL=C
+
+if [ -n "$NERSC_HOST" ]; then
+	c_host=$NERSC_HOST
+else
+# In case NERSC_HOST is unset, attempt to run hostname and then strip the 2 last characters out
+	c_host=$(hostname)
+	c_host=${c_host%??}
+fi
 
 usage() {
 echo "Usage: checkjob jobid[,jobid,jobid...]"
+exit "$1"
 }
 
-if (( $# == 0 )); then usage;exit 1;fi
+checkjob=$(basename -- "$0")
+
+validate() {
+# Validate availability of SLURM tools
+if ! type -P "$1" &>/dev/null; then
+	echo "$checkjob: Fatal error - $1 not found."
+	exit 1
+fi
+}
+
+validate squeue
+validate sinfo
+
+if (( $# == 0 )); then usage 1;fi
+if (( $# > 1 )); then usage 1;fi
+if [[ $1 == "--help" ]]; then usage 0;fi
 reasonfile=$(mktemp)
 statesfile=$(mktemp)
 # Lets create a little reason code database that we can easily work with...
 cat <<-EOF > $reasonfile
+	None: The job is running.
 	AssociationJobLimit: The job's association has reached its maximum job count.
 	AssociationResourceLimit: The job's association has reached some resource limit. 
 	AssociationTimeLimit: The job's association has reached its time limit. 
@@ -68,26 +97,78 @@ cat <<-EOF > $statesfile
 	TO TIMEOUT:  Job terminated upon reaching its time limit. 
 	EOF
 
+convert_t()
+{
+# convert 1-00:00:00 to 24:00:00
+	awk '{n=split($'$1',a,"[-:]");if(n=="4")a[1]=a[1]*24+a[2];if(n=="4")$'$1' = sprintf("%s:%s:%s", a[1], a[3], a[4]);print}'
+}
 
-prio=$(sprio -j "$1")
-
-if [[ "$prio" == "Unable to find jobs matching user/id(s) specified" ]]; then 
-	echo "Unable to determine job priority and age"
-else
-	echo "$prio"
-fi
-echo " --- "
+showtime() {
+#Convert seconds to hours minutes seconds
+    num=$1
+    min=0
+    hour=0
+    day=0
+    if((num>59));then
+        ((sec=num%60))
+        ((num=num/60))
+        if((num>59));then
+            ((min=num%60))
+            ((num=num/60))
+            if((num>23));then
+                ((hour=num%24))
+                ((day=num/24))
+            else
+                ((hour=num))
+            fi
+        else
+            ((min=num))
+        fi
+    else
+        ((sec=num))
+    fi
+    elapsed_time=$(echo "${day}d ${hour}h ${min}m ${sec}s")
+}
 queuef=$(mktemp)
-squeue -o "%.i %.t %.S %.r" > $queuef
-stime=$(awk -v jobid="$1" '$1 == jobid {print $3}' $queuef)
-if [[ "$stime" != "N/A" ]]; then
-	echo "Approximate START_TIME: $stime"
-else
-	echo "The estimated START_TIME has not been assigned"
-fi
-st=$(awk -v jobid="$1" '$1 == jobid {print $2}' $queuef)
-echo "CURRENT STATE - $(grep -w "$st" $statesfile)"
-rs=$(awk -v jobid="$1" '$1 == jobid {print $4}' $queuef)
-echo "REASON - $(grep -w "$rs" $reasonfile)"
-rm -f $statesfile $reasonfile $queuef
+squeue -o "%.i %.t %.S %.r %.l %.M %.V %.u %.P %.a %.e" | convert_t 5 | convert_t 6 > "$queuef"
+re='^[0-9]+$'
+IFS=, read -ra jid <<< "$1"; for a in "${jid[@]}"
+do
+	if [[ ! "$a" =~ $re ]]; then echo "$checkjob: $a not a valid jobid";continue;fi 
+	if ! grep -w "$a" "$queuef" &>/dev/null; then echo "$checkjob: $a jobid not found";continue;fi
+	echo " --- "
+	nodelist=$(scontrol show job "$a" | grep -E -w "NodeList=*" | sed -e 's/NodeList=//')
+	cmd=$(scontrol show job "$a" | grep Command= | sed -e 's/Command=//')
+	end_time=$(awk -v jobid="$a" '$1 == jobid {print $11}' "$queuef")
+	partition=$(awk -v jobid="$a" '$1 == jobid {print $9}' "$queuef")
+	repo=$(awk -v jobid="$a" '$1 == jobid {print $10}' "$queuef")
+	user=$(awk -v jobid="$a" '$1 == jobid {print $8}' "$queuef")
+	submitted=$(awk -v jobid="$a" '$1 == jobid {print $7}' "$queuef")
+	stime=$(awk -v jobid="$a" '$1 == jobid {print $3}' "$queuef")
+	requested=$(awk -v jobid="$a" '$1 == jobid {print $5}' "$queuef")
+	used=$(awk -v jobid="$a" '$1 == jobid {print $6}' "$queuef")
+	current_date=$(date +"%s")
+	job_date=$(date --date="$(echo "$submitted" | tr 'T' ' ')-0800" +%s)
+	elapsed_seconds=$((current_date-job_date))
+	showtime "$elapsed_seconds"
+	echo "Jobid: (${a}) User: (${user}) Partition: (${partition}) Repo: (${repo})" 
+	echo "Walltime: (${used}) of (${requested}) SubmitTime: (${submitted}) (Time queued total: ${elapsed_time}) "
+	echo "Command: (${cmd#???})"
+	if [[ "$stime" != "N/A" ]]; then
+		echo "Approximate START_TIME: (${stime}) Approximate END_TIME: (${end_time})"
+	else
+		echo "This job doesn't have a START_TIME yet, see details below"
+	fi
+
+	st="$(awk -v jobid="$a" '$1 == jobid {print $2}' "$queuef")"
+	echo "CURRENT STATE - ($(grep -w "$st" $statesfile))"
+	rs=$(awk -v jobid="$a" '$1 == jobid {print $4}' "$queuef")
+	echo "REASON - ($(grep -w "$rs" "$reasonfile"))"
+	if [[ "$nodelist" != "   (null)" ]]; then 
+		echo "Nodelist: (${nodelist#???})"
+	else
+		echo "Nodelist: (This job does not have any nodes allocated to it yet.)"
+	fi
+done
+rm -f "$statesfile" "$reasonfile" "$queuef"
 exit 0
