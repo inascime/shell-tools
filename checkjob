@@ -3,7 +3,6 @@
 # 02/01/2015 - <inascime@lbl.gov>
 # Pulls dedicated information with explanations about a job
 # Checkjob currently is under development.
-
 export PATH=/opt/slurm/default/bin:$PATH
 LC_ALL=C
 
@@ -75,6 +74,7 @@ cat <<-EOF > $reasonfile
 	SystemFailure: Failure of the Slurm system, a file system, the network, etc. 
 	TimeLimit: The job exhausted its time limit. 
 	QOSUsageThreshold: Required QOS threshold has been breached. 
+	QOSMaxJobsPerUserLimit: QOS Max jobs per User limit reached. See page on Queue and Policies for $c_host at NERSC website
 	WaitingForScheduling: No reason has been set for this job yet. Waiting for the scheduler to determine the appropriate reason. 
 	EOF
 
@@ -88,7 +88,7 @@ cat <<-EOF > $statesfile
 	CG COMPLETING:  Job is in the process of completing. Some processes on some nodes may still be active. 
 	F FAILED: Job terminated with non-zero exit code or other failure condition. 
 	NF NODE_FAIL: Job terminated due to failure of one or more allocated nodes. 
-	PD PENDING: Job is awaiting resource allocation. 
+	PD PENDING: Job is awaiting resource allocation. See Reason below. 
 	PR PREEMPTED: Job terminated due to preemption. 
 	R RUNNING: Job currently has an allocation. 
 	SE SPECIAL_EXIT: The job was requeued in a special state. This state can be set by users, typically in EpilogSlurmctld, if the job has terminated with a particular exit value. 
@@ -132,6 +132,7 @@ showtime() {
 queuef=$(mktemp)
 squeue -o "%.i %.t %.S %.r %.l %.M %.V %.u %.P %.a %.e" | convert_t 5 | convert_t 6 > "$queuef"
 re='^[0-9]+$'
+echo "Host: (${c_host})"
 IFS=, read -ra jid <<< "$1"; for a in "${jid[@]}"
 do
 	if [[ ! "$a" =~ $re ]]; then echo "$checkjob: $a not a valid jobid";continue;fi 
@@ -159,11 +160,13 @@ do
 	else
 		echo "This job doesn't have a START_TIME yet, see details below"
 	fi
-
+	jobstate=$(scontrol show job "$a" | grep JobState | sed -e 's/Dependency=(null)//')
+	jobstate=$(echo "${jobstate#???}")
 	st="$(awk -v jobid="$a" '$1 == jobid {print $2}' "$queuef")"
-	echo "CURRENT STATE - ($(grep -w "$st" $statesfile))"
+	echo "CURRENT STATE - (${jobstate})"
 	rs=$(awk -v jobid="$a" '$1 == jobid {print $4}' "$queuef")
 	echo "REASON - ($(grep -w "$rs" "$reasonfile"))"
+	if [[ "$st" != "PD" && "$st" != "R" ]]; then echo "ST CODE MEANING - ($(grep -w "$st" "$statesfile"))";fi
 	if [[ "$nodelist" != "   (null)" ]]; then 
 		echo "Nodelist: (${nodelist#???})"
 	else
