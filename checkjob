@@ -39,7 +39,7 @@ reasonfile=$(mktemp)
 statesfile=$(mktemp)
 # Lets create a little reason code database that we can easily work with...
 cat <<-EOF > $reasonfile
-	None: The job is running.
+	None
 	AssociationJobLimit: The job's association has reached its maximum job count.
 	AssociationResourceLimit: The job's association has reached some resource limit. 
 	AssociationTimeLimit: The job's association has reached its time limit. 
@@ -165,7 +165,7 @@ do
 	st="$(awk -v jobid="$a" '$1 == jobid {print $2}' "$queuef")"
 	echo "CURRENT STATE - (${jobstate})"
 	rs=$(awk -v jobid="$a" '$1 == jobid {print $4}' "$queuef")
-	echo "REASON - ($(grep -w "$rs" "$reasonfile"))"
+	echo "REASON - ($(grep "$rs" "$reasonfile"))"
 	if [[ "$st" != "PD" && "$st" != "R" ]]; then echo "ST CODE MEANING - ($(grep -w "$st" "$statesfile"))";fi
 	if [[ "$nodelist" != "   (null)" ]]; then 
 		echo "Nodelist: (${nodelist#???})"
