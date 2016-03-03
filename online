@@ -9,11 +9,13 @@ count=1
 total=0
 mu=0
 if [[ "$host" == "cori" ]]; then
-	cori_login_nodes=13
+	lnodes=13
+elif [[ "$host" == "edison" ]]; then
+	lnodes=12
 fi
 maxload=0.00
 minload=0.00
-while [[ $count -lt "$cori_login_nodes" ]]
+while [[ $count -lt "$lnodes" ]]
 do
 	if [[ $count -gt "9" ]]; then
 		{ IFS= read -rd '' users; IFS= read -rd '' uptime; } < <(ssh -Y -q "$host$count" 'users; printf "\0"; uptime')
